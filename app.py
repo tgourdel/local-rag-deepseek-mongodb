@@ -1,10 +1,12 @@
+# app.py
 import os
 import tempfile
 import time
+import re
 import streamlit as st
-from chatpdf import RAG
+from rag_module import ChatPDF
 
-st.set_page_config(page_title="Local RAG with DeepSeek and MongoDB")
+st.set_page_config(page_title="RAG with Local DeepSeek R1")
 
 
 def display_messages():
@@ -12,8 +14,25 @@ def display_messages():
     st.subheader("Chat History")
     for message in st.session_state["messages"]:
         with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-    st.session_state["thinking_spinner"] = st.empty()
+            if message["role"] == "assistant":
+                # Process the content to hide <think>...</think> blocks
+                content = message["content"]
+                # Use regex to find all <think>...</think> blocks
+                think_blocks = re.findall(r'<think>(.*?)</think>', content, re.DOTALL)
+                # Remove all <think>...</think> blocks from the visible content
+                visible_content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+
+                # Display the visible content
+                st.markdown(visible_content)
+
+                # For each think block, add an expander to show the hidden content
+                for think in think_blocks:
+                    with st.expander("Show Hidden Reasoning", expanded=False):
+                        st.markdown(think)
+            else:
+                # For user and system messages, display normally
+                st.markdown(message["content"])
+    # Removed the thinking_spinner assignment
 
 
 def process_input():
@@ -22,15 +41,15 @@ def process_input():
     if user_input:
         # Add user message to chat history
         st.session_state["messages"].append({"role": "user", "content": user_input})
-        
+
         with st.chat_message("user"):
             st.markdown(user_input)
-        
-        # Prepare conversation history for context (excluding the latest user message if desired)
+
+        # Prepare conversation history for context (excluding system messages if any)
         conversation_history = [
             msg["content"] for msg in st.session_state["messages"] if msg["role"] != "system"
         ]
-        
+
         # Display assistant response
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
@@ -44,17 +63,17 @@ def process_input():
                     )
                 except ValueError as e:
                     agent_text = str(e)
-            
+
             st.markdown(agent_text)
-        
+
         # Add assistant response to chat history
         st.session_state["messages"].append({"role": "assistant", "content": agent_text})
-        
+
         # Clear the input box
         st.session_state["user_input"] = ""
 
 
-def upload_file():
+def read_and_save_file():
     """Handle file upload and ingestion."""
     st.session_state["assistant"].clear()
     st.session_state["messages"] = []
@@ -67,7 +86,7 @@ def upload_file():
 
         with st.session_state["ingestion_spinner"], st.spinner(f"Ingesting {file.name}..."):
             t0 = time.time()
-            st.session_state["assistant"].ingestion(file_path)
+            st.session_state["assistant"].ingest(file_path)
             t1 = time.time()
 
         st.session_state["messages"].append(
@@ -81,45 +100,36 @@ def initialize_session_state():
     if "messages" not in st.session_state:
         st.session_state["messages"] = []
     if "assistant" not in st.session_state:
-        st.session_state["assistant"] = RAG()
+        st.session_state["assistant"] = ChatPDF()
     if "ingestion_spinner" not in st.session_state:
         st.session_state["ingestion_spinner"] = st.empty()
     if "retrieval_k" not in st.session_state:
-        st.session_state["retrieval_k"] = 5
+        st.session_state["retrieval_k"] = 5  # Default value
     if "retrieval_threshold" not in st.session_state:
-        st.session_state["retrieval_threshold"] = 0.2
+        st.session_state["retrieval_threshold"] = 0.2  # Default value
     if "user_input" not in st.session_state:
         st.session_state["user_input"] = ""
 
 
-def main():
+def page():
     """Main app page layout."""
     initialize_session_state()
 
-    st.header("RAG with Local DeepSeek R1")
+    st.header("Local RAG with MongoDB and DeepSeek")
 
     st.subheader("Upload a Document")
     st.file_uploader(
         "Upload a PDF document",
         type=["pdf"],
         key="file_uploader",
-        on_change=upload_file,
+        on_change=read_and_save_file,
         label_visibility="collapsed",
         accept_multiple_files=True,
     )
 
-    # Retrieval settings
-    st.subheader("Settings")
-    st.session_state["retrieval_k"] = st.slider(
-        "Number of Retrieved Results (k)", min_value=1, max_value=10, value=st.session_state["retrieval_k"]
-    )
-    st.session_state["retrieval_threshold"] = st.slider(
-        "Similarity Score Threshold", min_value=0.0, max_value=1.0, value=st.session_state["retrieval_threshold"], step=0.05
-    )
-
     # Display messages and text input
     display_messages()
-    
+
     # Accept user input using the new chat input
     prompt = st.chat_input("Type your message here...")
     if prompt:
@@ -134,4 +144,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    page()
